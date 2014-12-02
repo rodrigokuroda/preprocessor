@@ -1,6 +1,5 @@
 package br.edu.utfpr.minerador.preprocessor;
 
-import br.edu.utfpr.minerador.preprocessor.Main;
 import org.junit.After;
 import static org.junit.Assert.assertEquals;
 import org.junit.Before;
@@ -25,7 +24,7 @@ public class MainTest {
 
     @Test
     public void testBuildPattern() {
-        assertEquals("A(?i)RIES-\\d+", Main.buildPatternByName("aries"));
+        assertEquals("A(?i)RIES-(\\d+)(,\\s*\\d+)*", Main.buildPatternByName("aries"));
     }
 
 }
