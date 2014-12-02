@@ -70,7 +70,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>br.edu.utfpr.commitsloc.Main</mainClass>
+                            <mainClass>br.edu.utfpr.minerador.preprocessor.Main</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
