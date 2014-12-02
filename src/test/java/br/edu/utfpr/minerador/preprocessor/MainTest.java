@@ -24,7 +24,7 @@ public class MainTest {
 
     @Test
     public void testBuildPattern() {
-        assertEquals("A(?i)RIES-(\\d+)(,\\s*\\d+)*", Main.buildPatternByName("aries"));
+        assertEquals("(?i)ARIES-(\\d+)(,\\s*\\d+)*", Main.buildPatternByName("aries"));
     }
 
 }
