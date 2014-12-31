@@ -12,7 +12,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
 import java.util.Set;
@@ -91,19 +95,27 @@ public class Main {
         }
         System.exit(0);
     }
-
     private static void executeOptimizationScript(Connection mysqlConnection, String projectName) throws SQLException {
 
         String issueDatabaseName = projectName + "_issues";
         mysqlConnection.prepareStatement(
-                "CREATE TABLE IF NOT EXISTS `" + issueDatabaseName + "`.`issues_scmlog` ("
-                + "  `id` int(11) NOT NULL AUTO_INCREMENT,"
-                + "  `issue_id` int(11) NOT NULL,"
-                + "  `scmlog_id` int(11) NOT NULL,"
-                + "  PRIMARY KEY (`id`),"
-                + "  UNIQUE KEY `unq_issue_scmlog` (`issue_id`,`scmlog_id`),"
-                + "  KEY `issue_id` (`issue_id`),"
-                + "  KEY `scmlog_id` (`scmlog_id`)"
+                "CREATE TABLE IF NOT EXISTS " + issueDatabaseName + ".issues_scmlog ("
+                + "  id int(11) NOT NULL AUTO_INCREMENT,"
+                + "  issue_id int(11) NOT NULL,"
+                + "  scmlog_id int(11) NOT NULL,"
+                + "  PRIMARY KEY (id),"
+                + "  UNIQUE KEY unq_issue_scmlog (issue_id,scmlog_id),"
+                + "  KEY issue_id (issue_id),"
+                + "  KEY scmlog_id (scmlog_id)"
+                + ")").execute();
+
+        mysqlConnection.prepareStatement(
+                "CREATE TABLE IF NOT EXISTS " + issueDatabaseName + ".issues_fix_version ("
+                + "  issue_id int(11) NOT NULL,"
+                + "  fix_version varchar(35) NOT NULL,"
+                + "  UNIQUE KEY unq_issue_fix_version (issue_id,fix_version),"
+                + "  KEY issue_id (issue_id),"
+                + "  KEY fix_version (fix_version)"
                 + ")").execute();
 
         final String preprocessingIssues = "preprocessing.sql";
@@ -160,20 +172,7 @@ public class Main {
         Process process = Runtime.getRuntime().exec(new String[]{"cmd", "/c", command});
         log.info(command);
 
-        Worker worker = new Worker(process);
-        worker.start();
-        try {
-            worker.join(TIMEOUT);
-            if (worker.exit == null) {
-                log.info("Timeout for restore database " + databaseName);
-                return;
-            }
-        } catch (InterruptedException ex) {
-            worker.interrupt();
-            Thread.currentThread().interrupt();
-            throw ex;
-        }
-
+        process.waitFor();
         process.destroy();
     }
 
@@ -185,15 +184,13 @@ public class Main {
     private static void linkIssueToScmlog(Connection conn, String project) throws SQLException {
 
         final Statement statement = conn.createStatement();
-        final ResultSet commitMessages = statement.executeQuery("SELECT id, message FROM " + project + "_vcs.scmlog");
+        final ResultSet commitMessages = statement.executeQuery("SELECT id, message FROM " + project + "_vcs.scmlog WHERE num_files <= 20");
         final Set<Commit> commits = new HashSet<>();
 
         log.info("Querying commits...");
         while (commitMessages.next()) {
             commits.add(new Commit(commitMessages.getInt("id"), commitMessages.getString("message")));
         }
-
-        log.info("Commits: " + commits.size());
 
         int totalFound = 0;
         int totalRelated = 0;
@@ -214,12 +211,35 @@ public class Main {
             selectIssueId = "SELECT id FROM " + project + "_issues.issues WHERE issue = ?";
         } else {
             issueReferencePattern = buildPatternByName(project);
-            selectIssueId = "SELECT id FROM " + project + "_issues.issues WHERE id = ("
-                    + "SELECT p.issue_id FROM " + project + "_issues.issues_ext_jira p WHERE UPPER(p.issue_key) = ?)";
+            selectIssueId
+                    = "SELECT DISTINCT i.id, iej.fix_version FROM " + project + "_issues.issues i"
+                    + "  JOIN " + project + "_issues.changes c ON c.issue_id = i.id"
+                    + "  JOIN " + project + "_issues.issues_ext_jira iej ON iej.issue_id = i.id"
+                    + " WHERE UPPER(iej.issue_key) = ?"
+                    + "   AND i.resolution = 'Fixed'"
+                    + "   AND c.field = 'Resolution'"
+                    + "   AND c.new_value = i.resolution";
+        }
+
+        final int totalIssues;
+        try (PreparedStatement countIssuesStatement = conn.prepareStatement("SELECT COUNT(1) FROM " + project + "_issues.issues");
+                ResultSet countIssuesResult = countIssuesStatement.executeQuery();) {
+            countIssuesResult.next();
+            totalIssues = countIssuesResult.getInt(1);
+        }
+
+        final int totalCommits;
+        try (PreparedStatement countCommitsStatement = conn.prepareStatement("SELECT COUNT(1) FROM " + project + "_vcs.scmlog");
+                ResultSet countCommitsResult = countCommitsStatement.executeQuery();) {
+            countCommitsResult.next();
+            totalCommits = countCommitsResult.getInt(1);
         }
 
         final Pattern regex = Pattern.compile(issueReferencePattern, Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
         final Pattern regexNumber = Pattern.compile("\\d+");
+
+        final Map<Integer, List<String>> issuesIdFixVersion = new HashMap<>();
+        final Set<Integer> fixedIssuesSet = new HashSet<>();
 
         for (Commit commit : commits) {
             final Matcher matcher = regex.matcher(commit.getMessage());
@@ -247,18 +267,20 @@ public class Main {
                 ResultSet executeQuery = selectRelatedIssue.executeQuery();
 
                 if (executeQuery.next()) {
-                    PreparedStatement queryToRelate = conn.prepareStatement(
+                    try (PreparedStatement queryToRelate = conn.prepareStatement(
                             "INSERT INTO " + project
-                            + "_issues.issues_scmlog (issue_id, scmlog_id) VALUES (?, ?)");
-                    final int issueId = executeQuery.getInt(1);
-                    queryToRelate.setInt(1, issueId);
-                    queryToRelate.setInt(2, commit.getId());
-
-                    try {
-                        queryToRelate.execute();
-                        totalRelated++;
-                    } catch (MySQLIntegrityConstraintViolationException e) {
-                        log.info("Issue " + issueId + " and commit " + commit.getId() + " already exists.");
+                            + "_issues.issues_scmlog (issue_id, scmlog_id) VALUES (?, ?)")) {
+                        final int issueId = executeQuery.getInt(1);
+                        queryToRelate.setInt(1, issueId);
+                        queryToRelate.setInt(2, commit.getId());
+                        issuesIdFixVersion.put(issueId, Arrays.asList(executeQuery.getString(2).split(",")));
+                        fixedIssuesSet.add(issueId);
+                        try {
+                            queryToRelate.execute();
+                            totalRelated++;
+                        } catch (MySQLIntegrityConstraintViolationException e) {
+                            log.info("Issue " + issueId + " and commit " + commit.getId() + " already exists.");
+                        }
                     }
                 }
             }
@@ -266,11 +288,48 @@ public class Main {
             log.info(mactherCount + " ocorrências para o commit " + commit.getId());
         }
 
+        PreparedStatement issueFixVersionInsert = conn.prepareStatement(
+                "INSERT INTO " + project
+                + "_issues.issues_fix_version (issue_id, fix_version) VALUES (?, ?)");
+
+        int countIssuesWithFixVersion = 0;
+
+        for (Map.Entry<Integer, List<String>> entrySet : issuesIdFixVersion.entrySet()) {
+            Integer issueId = entrySet.getKey();
+            List<String> versions = entrySet.getValue();
+
+            if (versions.isEmpty() || versions.get(0).isEmpty()) {
+                log.info("Issue " + issueId + " has no fix version.");
+            } else {
+                log.info("Issue " + issueId + " is fixed in " + versions.size() + " versions.");
+
+                for (String version : versions) {
+                    try {
+                        issueFixVersionInsert.setInt(1, issueId);
+                        issueFixVersionInsert.setString(2, version);
+
+                        issueFixVersionInsert.execute();
+                    } catch (MySQLIntegrityConstraintViolationException e) {
+                        log.info("Issue " + issueId + " and version " + version + " already exists.");
+                    }
+                }
+
+                countIssuesWithFixVersion++;
+            }
+        }
+
+        issueFixVersionInsert.close();
+
         conn.commit();
         conn.setAutoCommit(true);
 
-        log.info(totalFound + " ocorrências de " + issueReferencePattern);
-        log.info(totalRelated + " relacionados");
+        log.info("\n\n"
+                + commits.size() + " of " + totalCommits + " commits has less than or equal to 20 files\n"
+                + fixedIssuesSet.size() + " of " + totalIssues + " issues was fixed\n"
+                + countIssuesWithFixVersion + " of " + totalIssues + " issues has 'fix version'\n"
+                + totalFound + " occurrences of pattern \"" + issueReferencePattern + "\" in commits' message was found\n"
+                + totalRelated + " occurrences was related with an issue\n"
+        );
     }
 
     private static void executeSqlScript(Connection conn, InputStream inputFile, String databaseName) throws SQLException {
