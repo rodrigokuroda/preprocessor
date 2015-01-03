@@ -192,8 +192,8 @@ public class Main {
             commits.add(new Commit(commitMessages.getInt("id"), commitMessages.getString("message")));
         }
 
-        int totalFound = 0;
-        int totalRelated = 0;
+        int totalPatternOcurrences = 0;
+        int totalCommitWithPatternRelated = 0;
 
         conn.setAutoCommit(false);
 
@@ -238,7 +238,7 @@ public class Main {
         final Pattern regex = Pattern.compile(issueReferencePattern, Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
         final Pattern regexNumber = Pattern.compile("\\d+");
 
-        final Map<Integer, List<String>> issuesIdFixVersion = new HashMap<>();
+        final Map<Integer, List<String>> fixedIssuesIdFixVersion = new HashMap<>();
         final Set<Integer> fixedIssuesSet = new HashSet<>();
 
         for (Commit commit : commits) {
@@ -259,7 +259,7 @@ public class Main {
                     }
                 }
 
-                totalFound++;
+                totalPatternOcurrences++;
                 mactherCount++;
                 PreparedStatement selectRelatedIssue = conn.prepareStatement(selectIssueId);
                 selectRelatedIssue.setString(1, issueKey.toUpperCase());
@@ -273,11 +273,14 @@ public class Main {
                         final int issueId = executeQuery.getInt(1);
                         queryToRelate.setInt(1, issueId);
                         queryToRelate.setInt(2, commit.getId());
-                        issuesIdFixVersion.put(issueId, Arrays.asList(executeQuery.getString(2).split(",")));
+
+                        // adiciona as versões da issue corrigida
+                        fixedIssuesIdFixVersion.put(issueId, Arrays.asList(executeQuery.getString(2).split(",")));
+                        // adiciona a issue corrigida
                         fixedIssuesSet.add(issueId);
                         try {
                             queryToRelate.execute();
-                            totalRelated++;
+                            totalCommitWithPatternRelated++;
                         } catch (MySQLIntegrityConstraintViolationException e) {
                             log.info("Issue " + issueId + " and commit " + commit.getId() + " already exists.");
                         }
@@ -294,7 +297,7 @@ public class Main {
 
         int countIssuesWithFixVersion = 0;
 
-        for (Map.Entry<Integer, List<String>> entrySet : issuesIdFixVersion.entrySet()) {
+        for (Map.Entry<Integer, List<String>> entrySet : fixedIssuesIdFixVersion.entrySet()) {
             Integer issueId = entrySet.getKey();
             List<String> versions = entrySet.getValue();
 
@@ -326,9 +329,9 @@ public class Main {
         log.info("\n\n"
                 + commits.size() + " of " + totalCommits + " commits has less than or equal to 20 files\n"
                 + fixedIssuesSet.size() + " of " + totalIssues + " issues was fixed\n"
-                + countIssuesWithFixVersion + " of " + totalIssues + " issues has 'fix version'\n"
-                + totalFound + " occurrences of pattern \"" + issueReferencePattern + "\" in commits' message was found\n"
-                + totalRelated + " occurrences was related with an issue\n"
+                + countIssuesWithFixVersion + " of " + fixedIssuesSet.size() + " issues has 'fix version'\n"
+                + totalPatternOcurrences + " occurrences of pattern \"" + issueReferencePattern + "\" in commits' message was found\n"
+                + totalCommitWithPatternRelated + " occurrences was related with an issue\n"
         );
     }
 
