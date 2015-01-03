@@ -27,4 +27,9 @@ public class MainTest {
         assertEquals("(?i)ARIES-(\\d+)(,\\s*\\d+)*", Main.buildPatternByName("aries"));
     }
 
+    @Test
+    public void testSplitVersion() {
+        assertEquals("1.3", Main.getMajorVersion("1.3.2"));
+    }
+
 }

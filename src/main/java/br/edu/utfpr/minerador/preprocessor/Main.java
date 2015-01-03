@@ -1,8 +1,8 @@
 package br.edu.utfpr.minerador.preprocessor;
 
+import br.edu.utfpr.minerador.preprocessor.database.ConnectionFactory;
+import br.edu.utfpr.minerador.preprocessor.model.Commit;
 import com.mysql.jdbc.exceptions.jdbc4.MySQLIntegrityConstraintViolationException;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -17,7 +17,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Scanner;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -33,41 +32,19 @@ public class Main {
 
     private static final Logger log = LoggerFactory.getLogger(Main.class);
 
-    public static final String SQL_DELIMITER = ";";
-
-    private static long TIMEOUT = 10 * 60 * 1000; // 10 min
-
-    private static HikariDataSource getDatasource() {
-        return getDatasource(null);
-    }
-
-    private static HikariDataSource getDatasource(final String databaseName) {
-        HikariConfig config = new HikariConfig();
-        config.setMaximumPoolSize(100);
-        config.setDataSourceClassName("com.mysql.jdbc.jdbc2.optional.MysqlDataSource");
-        config.addDataSourceProperty("serverName", "localhost");
-        config.addDataSourceProperty("port", "3306");
-        if (databaseName != null) {
-            config.addDataSourceProperty("databaseName", databaseName);
-        }
-        config.addDataSourceProperty("user", "root");
-        config.addDataSourceProperty("password", "root");
-        config.setConnectionTestQuery("SELECT 1");
-
-        return new HikariDataSource(config);
-    }
+    private static final long TIMEOUT = 10 * 60 * 1000; // 10 min
+    private static final String SQL_DELIMITER = ";";
 
     public static void main(String[] args) throws SQLException {
+        args = new String[]{"C:\\Users\\a562273\\DB\\teste", "camel"};
         if (args.length < 2) {
             log.warn("Enter the backupsPath and projectName.\n"
                     + "E.g. preprocessor.jar /backups project");
         }
 
-        HikariDataSource mysqlDatasource = null;
-        Connection mysqlConnection = null;
-        try {
-            mysqlDatasource = getDatasource();
-            mysqlConnection = mysqlDatasource.getConnection();
+        ConnectionFactory factory = new ConnectionFactory();
+
+        try (Connection mysqlConnection = factory.getConnection()) {
 
             String backupsPath = args[0];
             String projectName = args[1];
@@ -82,16 +59,11 @@ public class Main {
 
             log.info("Successfuly pre-processed!");
 
-        } catch (Exception ex) {
+        } catch (SQLException | IOException | InterruptedException ex) {
             log.error("Error.", ex);
             System.exit(1);
         } finally {
-            if (mysqlConnection != null) {
-                mysqlConnection.close();
-            }
-            if (mysqlDatasource != null) {
-                mysqlDatasource.close();
-            }
+            factory.close();
         }
         System.exit(0);
     }
@@ -112,10 +84,12 @@ public class Main {
         mysqlConnection.prepareStatement(
                 "CREATE TABLE IF NOT EXISTS " + issueDatabaseName + ".issues_fix_version ("
                 + "  issue_id int(11) NOT NULL,"
-                + "  fix_version varchar(35) NOT NULL,"
+                + "  fix_version varchar(255) NOT NULL,"
+                + "  major_fix_version varchar(255) NOT NULL,"
                 + "  UNIQUE KEY unq_issue_fix_version (issue_id,fix_version),"
                 + "  KEY issue_id (issue_id),"
-                + "  KEY fix_version (fix_version)"
+                + "  KEY fix_version (fix_version),"
+                + "  KEY major_fix_version (major_fix_version)"
                 + ")").execute();
 
         final String preprocessingIssues = "preprocessing.sql";
@@ -135,10 +109,10 @@ public class Main {
             throw new FileNotFoundException(backupsPath + "/" + projectName + "_issues.sql not found.");
         }
 
-        File vcsBackup = new File(backupsDir, projectName + "_vcs2.sql");
+        File vcsBackup = new File(backupsDir, projectName + "_vcs.sql");
 
         if (!backups.exists()) {
-            throw new FileNotFoundException(backupsPath + "/" + projectName + "_vcs2.sql not found.");
+            throw new FileNotFoundException(backupsPath + "/" + projectName + "_vcs.sql not found.");
         }
 
         String issueDatabaseName = projectName + "_issues";
@@ -157,6 +131,7 @@ public class Main {
 
             restore(backups, issueDatabaseName);
             restore(vcsBackup, vcsDatabaseName);
+            Thread.sleep(10000);
 
             log.info("Restored successfuly!");
 
@@ -192,8 +167,8 @@ public class Main {
             commits.add(new Commit(commitMessages.getInt("id"), commitMessages.getString("message")));
         }
 
-        int totalPatternOcurrences = 0;
-        int totalCommitWithPatternRelated = 0;
+        int totalPatternOccurrences = 0;
+        int totalPatternRelatedWithAnIssue = 0;
 
         conn.setAutoCommit(false);
 
@@ -241,13 +216,16 @@ public class Main {
         final Map<Integer, List<String>> fixedIssuesIdFixVersion = new HashMap<>();
         final Set<Integer> fixedIssuesSet = new HashSet<>();
 
+        int totalCommitsWithOccurrences = 0;
+
         for (Commit commit : commits) {
             final Matcher matcher = regex.matcher(commit.getMessage());
 
-            int mactherCount = 0;
+            int matcherCount = 0;
 
             // para cada ocorrência do padrão
             while (matcher.find()) {
+
                 String issueKey = matcher.group(); // e.g.: ARIES-1234
 
                 if (isIssuesFromBugzilla) {
@@ -259,8 +237,8 @@ public class Main {
                     }
                 }
 
-                totalPatternOcurrences++;
-                mactherCount++;
+                totalPatternOccurrences++;
+                matcherCount++;
                 PreparedStatement selectRelatedIssue = conn.prepareStatement(selectIssueId);
                 selectRelatedIssue.setString(1, issueKey.toUpperCase());
 
@@ -280,20 +258,22 @@ public class Main {
                         fixedIssuesSet.add(issueId);
                         try {
                             queryToRelate.execute();
-                            totalCommitWithPatternRelated++;
+                            totalPatternRelatedWithAnIssue++;
                         } catch (MySQLIntegrityConstraintViolationException e) {
                             log.info("Issue " + issueId + " and commit " + commit.getId() + " already exists.");
                         }
                     }
                 }
             }
-
-            log.info(mactherCount + " ocorrências para o commit " + commit.getId());
+            if (matcherCount > 0) {
+                totalCommitsWithOccurrences++;
+            }
+            log.info(matcherCount + " ocorrências para o commit " + commit.getId());
         }
 
         PreparedStatement issueFixVersionInsert = conn.prepareStatement(
                 "INSERT INTO " + project
-                + "_issues.issues_fix_version (issue_id, fix_version) VALUES (?, ?)");
+                + "_issues.issues_fix_version (issue_id, fix_version, major_fix_version) VALUES (?, ?, ?)");
 
         int countIssuesWithFixVersion = 0;
 
@@ -310,6 +290,9 @@ public class Main {
                     try {
                         issueFixVersionInsert.setInt(1, issueId);
                         issueFixVersionInsert.setString(2, version);
+
+                        String majorVersion = getMajorVersion(version);
+                        issueFixVersionInsert.setString(3, majorVersion);
 
                         issueFixVersionInsert.execute();
                     } catch (MySQLIntegrityConstraintViolationException e) {
@@ -328,11 +311,23 @@ public class Main {
 
         log.info("\n\n"
                 + commits.size() + " of " + totalCommits + " commits has less than or equal to 20 files\n"
+                + totalCommitsWithOccurrences + " of " + commits.size() + " commits has at least one occurrence of pattern \"" + issueReferencePattern + "\"\n"
+                + totalPatternOccurrences + " occurrences of pattern \"" + issueReferencePattern + "\" in commits' message was found\n"
+                + totalPatternRelatedWithAnIssue + " of " + totalPatternOccurrences + " occurrences was related with an issue\n"
                 + fixedIssuesSet.size() + " of " + totalIssues + " issues was fixed\n"
                 + countIssuesWithFixVersion + " of " + fixedIssuesSet.size() + " issues has 'fix version'\n"
-                + totalPatternOcurrences + " occurrences of pattern \"" + issueReferencePattern + "\" in commits' message was found\n"
-                + totalCommitWithPatternRelated + " occurrences was related with an issue\n"
         );
+    }
+
+    public static String getMajorVersion(String version) {
+        String majorVersion;
+        String[] versionsSplited = version.split("[.]");
+        if (versionsSplited.length > 2) {
+            majorVersion = versionsSplited[0] + "." + versionsSplited[1];
+        } else {
+            majorVersion = version;
+        }
+        return majorVersion;
     }
 
     private static void executeSqlScript(Connection conn, InputStream inputFile, String databaseName) throws SQLException {
@@ -365,63 +360,5 @@ public class Main {
     static String buildPatternByName(String projectName) {
         String upper = projectName.toUpperCase();
         return "(?i)" + upper + "-(\\d+)(,\\s*\\d+)*";
-    }
-
-    private static class Worker extends Thread {
-
-        private final Process process;
-        private Integer exit;
-
-        private Worker(Process process) {
-            this.process = process;
-        }
-
-        @Override
-        public void run() {
-            try {
-                exit = process.waitFor();
-            } catch (InterruptedException e) {
-                log.error("Error to wait for thread." + e);
-            }
-        }
-    }
-
-    private static class Commit {
-
-        private final Integer id;
-        private final String message;
-
-        public Commit(Integer id, String message) {
-            this.id = id;
-            this.message = message;
-        }
-
-        public Integer getId() {
-            return id;
-        }
-
-        public String getMessage() {
-            return message;
-        }
-
-        @Override
-        public int hashCode() {
-            int hash = 7;
-            hash = 97 * hash + Objects.hashCode(this.id);
-            return hash;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (obj == null) {
-                return false;
-            }
-            if (getClass() != obj.getClass()) {
-                return false;
-            }
-            final Commit other = (Commit) obj;
-            return Objects.equals(this.id, other.id);
-        }
-
     }
 }
