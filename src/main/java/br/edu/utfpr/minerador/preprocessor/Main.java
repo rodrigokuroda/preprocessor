@@ -1,5 +1,6 @@
 package br.edu.utfpr.minerador.preprocessor;
 
+import br.edu.utfpr.minerador.preprocessor.comparator.VersionComparator;
 import br.edu.utfpr.minerador.preprocessor.database.ConnectionFactory;
 import br.edu.utfpr.minerador.preprocessor.model.Commit;
 import com.mysql.jdbc.exceptions.jdbc4.MySQLIntegrityConstraintViolationException;
@@ -12,7 +13,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -90,6 +93,15 @@ public class Main {
                 + "  KEY issue_id (issue_id),"
                 + "  KEY fix_version (fix_version),"
                 + "  KEY major_fix_version (major_fix_version)"
+                + ")").execute();
+
+        mysqlConnection.prepareStatement(
+                "CREATE TABLE IF NOT EXISTS " + issueDatabaseName + ".issues_fix_version_order ("
+                + "  major_fix_version varchar(255) NOT NULL,"
+                + "  version_order int(11) NOT NULL,"
+                + "  UNIQUE KEY unq_major_fix_version_order (major_fix_version,version_order),"
+                + "  KEY major_fix_version (major_fix_version),"
+                + "  KEY version_order (version_order)"
                 + ")").execute();
 
         final String preprocessingIssues = "preprocessing.sql";
@@ -277,6 +289,7 @@ public class Main {
 
         int countIssuesWithFixVersion = 0;
 
+        Set<String> distincMajorVersion = new HashSet<>();
         for (Map.Entry<Integer, List<String>> entrySet : fixedIssuesIdFixVersion.entrySet()) {
             Integer issueId = entrySet.getKey();
             List<String> versions = entrySet.getValue();
@@ -294,6 +307,8 @@ public class Main {
                         String majorVersion = getMajorVersion(version);
                         issueFixVersionInsert.setString(3, majorVersion);
 
+                        distincMajorVersion.add(majorVersion);
+
                         issueFixVersionInsert.execute();
                     } catch (MySQLIntegrityConstraintViolationException e) {
                         log.info("Issue " + issueId + " and version " + version + " already exists.");
@@ -305,6 +320,25 @@ public class Main {
         }
 
         issueFixVersionInsert.close();
+
+        List<String> majorVersionsList = new ArrayList<>(distincMajorVersion);
+
+        Collections.sort(majorVersionsList, new VersionComparator());
+
+        PreparedStatement issueFixVersionOrderInsert = conn.prepareStatement(
+                "INSERT INTO " + project
+                + "_issues.issues_fix_version_order (major_fix_version, version_order) VALUES (?, ?)");
+        int order = 1;
+        for (String majorVersion : majorVersionsList) {
+            try {
+                issueFixVersionOrderInsert.setString(1, majorVersion);
+                issueFixVersionOrderInsert.setInt(2, order++);
+
+                issueFixVersionOrderInsert.execute();
+            } catch (MySQLIntegrityConstraintViolationException e) {
+                log.info("Issue " + majorVersion + " order " + order + " already exists.");
+            }
+        }
 
         conn.commit();
         conn.setAutoCommit(true);
