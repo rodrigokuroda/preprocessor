@@ -39,7 +39,6 @@ public class Main {
     private static final String SQL_DELIMITER = ";";
 
     public static void main(String[] args) throws SQLException {
-        args = new String[]{"C:\\Users\\a562273\\DB\\teste", "camel"};
         if (args.length < 2) {
             log.warn("Enter the backupsPath and projectName.\n"
                     + "E.g. preprocessor.jar /backups project");
@@ -231,14 +230,18 @@ public class Main {
         int totalCommitsWithOccurrences = 0;
 
         for (Commit commit : commits) {
-            final Matcher matcher = regex.matcher(commit.getMessage());
+            // remove "git-svn-id: https://svn.apache.org/*" from message
+            // to avoid false positive matches of pattern
+            // (e.g. git-svn-id: https://svn.apache.org/camel-1.1.0)
+            final String commitMessage = replaceUrl(commit.getMessage());
+            final Matcher matcher = regex.matcher(commitMessage);
 
             int matcherCount = 0;
 
             // para cada ocorrência do padrão
             while (matcher.find()) {
 
-                String issueKey = matcher.group(); // e.g.: ARIES-1234
+                String issueKey = matcher.group().trim(); // e.g.: ARIES-1234
 
                 if (isIssuesFromBugzilla) {
                     Matcher matcherNumber = regexNumber.matcher(issueKey);
@@ -393,6 +396,10 @@ public class Main {
 
     static String buildPatternByName(String projectName) {
         String upper = projectName.toUpperCase();
-        return "(?i)" + upper + "-(\\d+)(,\\s*\\d+)*";
+        return "((?i)" + upper + "-\\d+)(?!([.-]\\w)+)";
+    }
+
+    static String replaceUrl(String text) {
+        return text.replaceAll("(\\s+git-svn-id:\\shttps://svn.apache.org/).*", "");
     }
 }
