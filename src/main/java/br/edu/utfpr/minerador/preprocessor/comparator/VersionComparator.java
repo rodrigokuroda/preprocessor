@@ -43,10 +43,19 @@ public class VersionComparator implements Comparator<String> {
                 i1 = 9999;
             }
 
-            if (i0.compareTo(i1) < 0) {
-                return -1;
-            } else if (i1.compareTo(i0) < 0) {
-                return 1;
+            if (version1[i].contains("-")
+                    && version2[i].contains("-")) {
+                if (version1[i].compareTo(version2[i]) < 0) {
+                    return -1;
+                } else if (version2[i].compareTo(version1[i]) < 0) {
+                    return 1;
+                }
+            } else {
+                if (i0.compareTo(i1) < 0) {
+                    return -1;
+                } else if (i1.compareTo(i0) < 0) {
+                    return 1;
+                }
             }
         }
 
