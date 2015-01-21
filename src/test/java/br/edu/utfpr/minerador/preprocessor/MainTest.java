@@ -27,10 +27,42 @@ public class MainTest {
 
     @Test
     public void testMatchPattern() {
-        final Pattern regex = Pattern.compile(Main.buildPatternByName("ARIES"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
-        Matcher matcher = regex.matcher("awdawdawd Aries-1 awdawd");
+        final Pattern regex = Pattern.compile(Main.buildPatternByName("DEBRY"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+        Matcher matcher = regex.matcher("DEBRY-467 - Unseal one package in derby.jar iapi.services.context that is also in derbytools.jar.");
         Assert.assertTrue(matcher.find());
-        Assert.assertEquals("Aries-1", matcher.group().trim());
+        Assert.assertEquals("DEBRY-467", matcher.group().trim());
+    }
+
+    @Test
+    public void testMatchPattern2() {
+        String message = "    DERBY-2193-03: Adjust the import/export lob tests which assert different results based on the vm level.\n"
+                + "     \n"
+                + "     git-svn-id: https://svn.apache.org/repos/asf/db/derby/code/trunk@529322 13f79535-47bb-0310-9956-ffa450edef68\n"
+                + " ";
+        final Pattern regex = Pattern.compile(Main.buildPatternByName("DERBY"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+        Matcher matcher = regex.matcher(message);
+        Assert.assertTrue(matcher.find());
+        Assert.assertEquals("DERBY-2193", matcher.group().trim());
+    }
+
+    @Test
+    public void testMatchPattern3() {
+        String message = "This commit is for DERBY- 2528 Set the correct collation type in SchemaDescriptor. The collation type will be UCS_BASIC for system schemas but it can be\n"
+                + "    TERRITORY_BASED/UCS_BASIC for user schemas.";
+        final Pattern regex = Pattern.compile(Main.buildPatternByName("DERBY"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+        Matcher matcher = regex.matcher(message);
+        Assert.assertTrue(matcher.find());
+        Assert.assertEquals("DERBY-2528", matcher.group().replace(" ", ""));
+    }
+
+    @Test
+    public void testMatchPattern4() {
+        String message = "This commit is for DERBY -2528 Set the correct collation type in SchemaDescriptor. The collation type will be UCS_BASIC for system schemas but it can be\n"
+                + "    TERRITORY_BASED/UCS_BASIC for user schemas.";
+        final Pattern regex = Pattern.compile(Main.buildPatternByName("DERBY"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+        Matcher matcher = regex.matcher(message);
+        Assert.assertTrue(matcher.find());
+        Assert.assertEquals("DERBY-2528", matcher.group().replace(" ", ""));
     }
 
     @Test
@@ -58,7 +90,7 @@ public class MainTest {
     public void testNotMatchPattern4() {
         final Pattern regex = Pattern.compile(Main.buildPatternByName("ARIES"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
         Matcher matcher = regex.matcher("awdawdawd http://apache.org/aries-1-1 awdawd");
-        Assert.assertFalse(matcher.find());
+        Assert.assertTrue(matcher.find());
     }
 
     @Test

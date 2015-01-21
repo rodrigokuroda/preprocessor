@@ -241,7 +241,7 @@ public class Main {
             // para cada ocorrência do padrão
             while (matcher.find()) {
 
-                String issueKey = matcher.group().trim(); // e.g.: ARIES-1234
+                String issueKey = matcher.group().replace(" ", ""); // e.g.: ARIES-1234
 
                 if (isIssuesFromBugzilla) {
                     Matcher matcherNumber = regexNumber.matcher(issueKey);
@@ -282,8 +282,10 @@ public class Main {
             }
             if (matcherCount > 0) {
                 totalCommitsWithOccurrences++;
+            } else {
+                log.info(commitMessage);
             }
-            log.info(matcherCount + " ocorrências para o commit " + commit.getId());
+//            log.info(matcherCount + " ocorrências para o commit " + commit.getId());
         }
 
         PreparedStatement issueFixVersionInsert = conn.prepareStatement(
@@ -300,7 +302,7 @@ public class Main {
             if (versions.isEmpty() || versions.get(0).isEmpty()) {
                 log.info("Issue " + issueId + " has no fix version.");
             } else {
-                log.info("Issue " + issueId + " is fixed in " + versions.size() + " versions.");
+//                log.info("Issue " + issueId + " is fixed in " + versions.size() + " versions.");
 
                 for (String version : versions) {
                     try {
@@ -347,12 +349,12 @@ public class Main {
         conn.setAutoCommit(true);
 
         log.info("\n\n"
-                + commits.size() + " of " + totalCommits + " commits has less than or equal to 20 files\n"
-                + totalCommitsWithOccurrences + " of " + commits.size() + " commits has at least one occurrence of pattern \"" + issueReferencePattern + "\"\n"
+                + commits.size() + " of " + totalCommits + " (total) commits has less than or equal to 20 files\n"
+                + totalCommitsWithOccurrences + " of " + commits.size() + " commits has at least one occurrence of pattern \"" + issueReferencePattern + "\"\n\n"
                 + totalPatternOccurrences + " occurrences of pattern \"" + issueReferencePattern + "\" in commits' message was found\n"
-                + totalPatternRelatedWithAnIssue + " of " + totalPatternOccurrences + " occurrences was related with an issue\n"
-                + fixedIssuesSet.size() + " of " + totalIssues + " issues was fixed\n"
-                + countIssuesWithFixVersion + " of " + fixedIssuesSet.size() + " issues has 'fix version'\n"
+                + totalPatternRelatedWithAnIssue + " of " + totalPatternOccurrences + " occurrences was related with an issue\n\n"
+                + fixedIssuesSet.size() + " of " + totalIssues + " (total) issues was fixed\n"
+                + countIssuesWithFixVersion + " of " + fixedIssuesSet.size() + " issues has 'fix version'\n\n"
         );
     }
 
@@ -396,7 +398,7 @@ public class Main {
 
     static String buildPatternByName(String projectName) {
         String upper = projectName.toUpperCase();
-        return "((?i)" + upper + "-\\d+)(?!([.-]\\w)+)";
+        return "(?i)(" + upper + "\\s*[-]+\\s*\\d+(?=\\.(?!\\w)|-(?![a-zA-Z])|:|\\s|,|]|\\)|\\(|;|_))";
     }
 
     static String replaceUrl(String text) {
