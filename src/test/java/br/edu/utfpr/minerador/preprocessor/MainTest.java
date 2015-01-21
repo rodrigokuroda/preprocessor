@@ -66,10 +66,18 @@ public class MainTest {
     }
 
     @Test
-    public void testNotMatchPattern1() {
+    public void testMatchPattern5() {
         final Pattern regex = Pattern.compile(Main.buildPatternByName("ARIES"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
         Matcher matcher = regex.matcher("awdawdawd Aries-1. awdawd");
         Assert.assertTrue(matcher.find());
+        Assert.assertEquals("Aries-1", matcher.group());
+    }
+
+    @Test
+    public void testNotMatchPattern1() {
+        final Pattern regex = Pattern.compile(Main.buildPatternByName("ARIES"), Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+        Matcher matcher = regex.matcher("awdawdawd Aries-1.1 awdawd");
+        Assert.assertFalse(matcher.find());
     }
 
     @Test
