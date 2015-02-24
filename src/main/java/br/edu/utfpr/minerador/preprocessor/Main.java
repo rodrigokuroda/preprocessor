@@ -34,11 +34,12 @@ import org.slf4j.LoggerFactory;
 public class Main {
 
     private static final Logger log = LoggerFactory.getLogger(Main.class);
-
-    private static final long TIMEOUT = 10 * 60 * 1000; // 10 min
     private static final String SQL_DELIMITER = ";";
 
     public static void main(String[] args) throws SQLException {
+
+        long start = System.currentTimeMillis();
+        
         if (args.length < 2) {
             log.warn("Enter the backupsPath and projectName.\n"
                     + "E.g. preprocessor.jar /backups project");
@@ -67,6 +68,7 @@ public class Main {
         } finally {
             factory.close();
         }
+        log.info("Finished in " + ((System.currentTimeMillis() - start) / 1000) + " secs.");
         System.exit(0);
     }
     private static void executeOptimizationScript(Connection mysqlConnection, String projectName) throws SQLException {
@@ -87,18 +89,22 @@ public class Main {
                 "CREATE TABLE IF NOT EXISTS " + issueDatabaseName + ".issues_fix_version ("
                 + "  issue_id int(11) NOT NULL,"
                 + "  fix_version varchar(255) NOT NULL,"
+                + "  minor_fix_version varchar(255) NOT NULL,"
                 + "  major_fix_version varchar(255) NOT NULL,"
                 + "  UNIQUE KEY unq_issue_fix_version (issue_id,fix_version),"
                 + "  KEY issue_id (issue_id),"
                 + "  KEY fix_version (fix_version),"
+                + "  KEY minor_fix_version (minor_fix_version),"
                 + "  KEY major_fix_version (major_fix_version)"
                 + ")").execute();
 
         mysqlConnection.prepareStatement(
                 "CREATE TABLE IF NOT EXISTS " + issueDatabaseName + ".issues_fix_version_order ("
+                + "  minor_fix_version varchar(255) NOT NULL,"
                 + "  major_fix_version varchar(255) NOT NULL,"
                 + "  version_order int(11) NOT NULL,"
                 + "  UNIQUE KEY unq_major_fix_version_order (major_fix_version,version_order),"
+                + "  KEY minor_fix_version (minor_fix_version),"
                 + "  KEY major_fix_version (major_fix_version),"
                 + "  KEY version_order (version_order)"
                 + ")").execute();
@@ -136,8 +142,12 @@ public class Main {
         try (Statement statement
                 = mysqlConnection.createStatement()) {
 
-            statement.execute("CREATE SCHEMA " + issueDatabaseName);
-            statement.execute("CREATE SCHEMA " + vcsDatabaseName);
+            statement.executeUpdate("DROP SCHEMA IF EXISTS " + issueDatabaseName);
+            statement.executeUpdate("DROP SCHEMA IF EXISTS " + vcsDatabaseName);
+            statement.executeUpdate("DROP SCHEMA IF EXISTS " + projectName);
+
+            statement.executeUpdate("CREATE SCHEMA " + issueDatabaseName);
+            statement.executeUpdate("CREATE SCHEMA " + vcsDatabaseName);
             mysqlConnection.commit();
 
             restore(backups, issueDatabaseName);
@@ -290,11 +300,11 @@ public class Main {
 
         PreparedStatement issueFixVersionInsert = conn.prepareStatement(
                 "INSERT INTO " + project
-                + "_issues.issues_fix_version (issue_id, fix_version, major_fix_version) VALUES (?, ?, ?)");
+                + "_issues.issues_fix_version (issue_id, fix_version, minor_fix_version, major_fix_version) VALUES (?, ?, ?, ?)");
 
         int countIssuesWithFixVersion = 0;
 
-        Set<String> distincMajorVersion = new HashSet<>();
+        Set<String> distincMinorVersion = new HashSet<>();
         for (Map.Entry<Integer, List<String>> entrySet : fixedIssuesIdFixVersion.entrySet()) {
             Integer issueId = entrySet.getKey();
             List<String> versions = entrySet.getValue();
@@ -309,10 +319,13 @@ public class Main {
                         issueFixVersionInsert.setInt(1, issueId);
                         issueFixVersionInsert.setString(2, version);
 
-                        String majorVersion = getMajorVersion(version);
-                        issueFixVersionInsert.setString(3, majorVersion);
+                        String minorVersion = getMinorVersion(version);
+                        issueFixVersionInsert.setString(3, minorVersion);
 
-                        distincMajorVersion.add(majorVersion);
+                        String majorVersion = getMajorVersion(version);
+                        issueFixVersionInsert.setString(4, majorVersion);
+
+                        distincMinorVersion.add(minorVersion);
 
                         issueFixVersionInsert.execute();
                     } catch (MySQLIntegrityConstraintViolationException e) {
@@ -326,22 +339,23 @@ public class Main {
 
         issueFixVersionInsert.close();
 
-        List<String> majorVersionsList = new ArrayList<>(distincMajorVersion);
+        List<String> minorVersionsOrdered = new ArrayList<>(distincMinorVersion);
 
-        Collections.sort(majorVersionsList, new VersionComparator());
+        Collections.sort(minorVersionsOrdered, new VersionComparator());
 
         PreparedStatement issueFixVersionOrderInsert = conn.prepareStatement(
                 "INSERT INTO " + project
-                + "_issues.issues_fix_version_order (major_fix_version, version_order) VALUES (?, ?)");
+                + "_issues.issues_fix_version_order (minor_fix_version, major_fix_version, version_order) VALUES (?, ?, ?)");
         int order = 1;
-        for (String majorVersion : majorVersionsList) {
+        for (String minorVersion : minorVersionsOrdered) {
             try {
-                issueFixVersionOrderInsert.setString(1, majorVersion);
-                issueFixVersionOrderInsert.setInt(2, order++);
+                issueFixVersionOrderInsert.setString(1, minorVersion);
+                issueFixVersionOrderInsert.setString(2, getMajorVersion(minorVersion));
+                issueFixVersionOrderInsert.setInt(3, order++);
 
                 issueFixVersionOrderInsert.execute();
             } catch (MySQLIntegrityConstraintViolationException e) {
-                log.info("Issue " + majorVersion + " order " + order + " already exists.");
+                log.info("Issue " + minorVersion + " order " + order + " already exists.");
             }
         }
 
@@ -358,40 +372,48 @@ public class Main {
         );
     }
 
+    // 1.1.1 > 1
     public static String getMajorVersion(String version) {
         String majorVersion;
         String[] versionsSplited = version.split("[.]");
-        if (versionsSplited.length > 2) {
-            majorVersion = versionsSplited[0] + "." + versionsSplited[1];
+        if (versionsSplited.length > 1) {
+            majorVersion = versionsSplited[0];
         } else {
             majorVersion = version;
         }
         return majorVersion;
     }
 
+    // 1.1.1 > 1.1
+    public static String getMinorVersion(String version) {
+        String minorVersion;
+        String[] versionsSplited = version.split("[.]");
+        if (versionsSplited.length > 2) {
+            minorVersion = versionsSplited[0] + "." + versionsSplited[1];
+        } else {
+            minorVersion = version;
+        }
+        return minorVersion;
+    }
+
     private static void executeSqlScript(Connection conn, InputStream inputFile, String databaseName) throws SQLException {
 
-        // Create scanner
+        // Create SQL scanner
         Scanner scanner = new Scanner(inputFile).useDelimiter(SQL_DELIMITER);
 
         // Loop through the SQL file statements
-        Statement currentStatement = null;
         while (scanner.hasNext()) {
 
             // Get statement
             String rawStatement = scanner.next() + SQL_DELIMITER;
-            try {
+            try (Statement currentStatement = conn.createStatement()) {
                 // Execute statement
-                currentStatement = conn.createStatement();
-                currentStatement.execute(rawStatement.replace("{0}", databaseName.split("_")[0]));
-            } catch (SQLException e) {
-                log.warn("Error in script execution.", e);
-            } finally {
-                // Release resources
-                if (currentStatement != null) {
-                    currentStatement.close();
+                final int executeUpdate = currentStatement.executeUpdate(rawStatement.replace("{0}", databaseName.split("_")[0]));
+                if (executeUpdate == 1) {
+                    log.debug("DML executed sucessfully.");
+                } else {
+                    log.debug("DDL executed sucessfully.");
                 }
-                currentStatement = null;
             }
         }
     }
