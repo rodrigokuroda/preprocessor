@@ -40,6 +40,15 @@ ALTER TABLE {0}_issues.issues ADD COLUMN num_commenters INT(11);
 ALTER TABLE {0}_issues.issues ADD COLUMN num_dev_commenters INT(11);
 ALTER TABLE {0}_issues.issues ADD COLUMN num_watchers INT(11);
 ALTER TABLE {0}_issues.issues ADD COLUMN reopened_times INT(11);
+ALTER TABLE {0}_issues.issues ADD COLUMN fixed_on DATETIME;
+
+UPDATE {0}_issues.issues i SET i.fixed_on =
+  (SELECT MAX(c.changed_on)
+     FROM {0}_issues.changes c
+    WHERE c.issue_id = i.id
+      AND c.field = "Resolution"
+      AND c.new_value = "Fixed")
+WHERE i.resolution = "Fixed";
 
 UPDATE {0}_issues.issues i SET
 i.num_comments =
@@ -71,7 +80,7 @@ i.reopened_times =
     AND c.field = "Status"
     AND c.issue_id = i.id);
 
--- denormilize vcs schema
+-- denormalize vcs schema
 CREATE SCHEMA {0};
 
 CREATE TABLE IF NOT EXISTS {0}.commits (
