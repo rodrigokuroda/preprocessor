@@ -15,7 +15,7 @@ public class VersionComparator implements Comparator<String> {
         String[] version2 = o2.split("[.]");
 
         int length = version1.length;
-        if (version2.length > version1.length) {
+        if (version2.length < version1.length) {
             length = version2.length;
         }
 

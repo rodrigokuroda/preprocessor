@@ -39,7 +39,7 @@ public class Main {
     public static void main(String[] args) throws SQLException {
 
         long start = System.currentTimeMillis();
-        
+
         if (args.length < 2) {
             log.warn("Enter the backupsPath and projectName.\n"
                     + "E.g. preprocessor.jar /backups project");
@@ -322,8 +322,8 @@ public class Main {
                         String minorVersion = getMinorVersion(version);
                         issueFixVersionInsert.setString(3, minorVersion);
 
-                        String majorVersion = getMajorVersion(version);
-                        issueFixVersionInsert.setString(4, majorVersion);
+//                        String majorVersion = getMajorVersion(version);
+                        issueFixVersionInsert.setString(4, minorVersion);
 
                         distincMinorVersion.add(minorVersion);
 
@@ -340,6 +340,7 @@ public class Main {
         issueFixVersionInsert.close();
 
         List<String> minorVersionsOrdered = new ArrayList<>(distincMinorVersion);
+        log.info(Arrays.toString(minorVersionsOrdered.toArray()));
 
         Collections.sort(minorVersionsOrdered, new VersionComparator());
 
@@ -350,7 +351,8 @@ public class Main {
         for (String minorVersion : minorVersionsOrdered) {
             try {
                 issueFixVersionOrderInsert.setString(1, minorVersion);
-                issueFixVersionOrderInsert.setString(2, getMajorVersion(minorVersion));
+//                issueFixVersionOrderInsert.setString(2, getMajorVersion(minorVersion));
+                issueFixVersionOrderInsert.setString(2, minorVersion);
                 issueFixVersionOrderInsert.setInt(3, order++);
 
                 issueFixVersionOrderInsert.execute();

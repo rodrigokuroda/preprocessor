@@ -113,11 +113,41 @@ SELECT DISTINCT s.id, s.rev, s.committer_id, s.date, s.message, s.repository_id,
   JOIN {0}_vcs.actions a ON a.commit_id = s.id
   JOIN {0}_vcs.files fil ON fil.id = a.file_id
   JOIN {0}_vcs.file_links fill ON fill.file_id = fil.id AND fill.commit_id IN
-	   (SELECT afill.commit_id
-		  FROM {0}_vcs.file_links afill
-		 WHERE afill.commit_id <= s.id
-		   AND afill.file_id = fil.id
+       (SELECT afill.commit_id
+          FROM {0}_vcs.file_links afill
+         WHERE afill.commit_id <= s.id
+           AND afill.file_id = fil.id
            AND afill.file_path LIKE CONCAT("%", fil.file_name))
   JOIN {0}_vcs.commits_files_lines filcl ON filcl.commit = s.id AND filcl.path = fill.file_path
  WHERE s.id IN (SELECT DISTINCT(scmlog_id) FROM {0}_issues.issues_scmlog)
  ORDER BY date ASC;
+
+
+CREATE TABLE IF NOT EXISTS {0}.issues_to_analyze (
+    fixed_date DATETIME, -- for ordering purpose
+    issue_id INT(11), -- issue
+    KEY fixed_date (fixed_date),
+    KEY issue_id (issue_id)
+);
+
+INSERT INTO {0}.issues_to_analyze (index_fixed_date, issue_id)
+  SELECT DISTINCT i.fixed_on, i.id
+    FROM {0}_issues.issues i
+    JOIN {0}_issues.changes c ON c.issue_id = i.id
+    JOIN {0}_issues.issues_scmlog i2s ON i2s.issue_id = i.id
+    JOIN {0}_issues.issues_fix_version ifv ON ifv.issue_id = i2s.issue_id
+    JOIN {0}_issues.issues_ext_jira iej ON iej.issue_id = i.id
+    JOIN {0}_vcs.scmlog s ON s.id = i2s.scmlog_id
+    JOIN {0}.commits com ON com.commit_id = i2s.scmlog_id
+   WHERE i.fixed_on IS NOT NULL
+     AND s.date > i.submitted_on
+     AND s.date < i.fixed_on
+     AND i.resolution = "Fixed"
+     AND c.field = "Resolution"
+     AND c.new_value = i.resolution
+     AND s.num_files <= 20
+     AND s.num_files > 0
+     AND (com.file_path LIKE '%.xml' OR com.file_path LIKE '%.java')
+     AND com.file_path NOT LIKE '%Test.java'
+     AND com.file_path NOT LIKE '%_test.java'
+   ORDER BY i.fixed_on ASC;
